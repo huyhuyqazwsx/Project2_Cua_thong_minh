@@ -1,0 +1,68 @@
+{
+  "project_info": {
+    "project_number": "1011294641020",
+    "firebase_url": "https://smart-door-2-7d605-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "smart-door-2-7d605",
+    "storage_bucket": "smart-door-2-7d605.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1011294641020:android:a9b957fa2266ce6d4aa2f9",
+        "android_client_info": {
+          "package_name": "com.example.smart_door"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA-4jl9_VxBc9COVA0mOVBZV2586ApfobM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1011294641020:android:994151391bf636344aa2f9",
+        "android_client_info": {
+          "package_name": "com.example.smartdoorapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA-4jl9_VxBc9COVA0mOVBZV2586ApfobM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1011294641020:android:b08e05bae41410a74aa2f9",
+        "android_client_info": {
+          "package_name": "com.huy.smartdoor"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA-4jl9_VxBc9COVA0mOVBZV2586ApfobM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
