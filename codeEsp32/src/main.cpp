@@ -299,8 +299,14 @@ void checkByInternet(){
   //Neu ket noi internet
 
   unsigned long currentMillis = millis();
-  if(WiFi.status() == WL_CONNECTED && (currentMillis - lastInternetCheckTime >= 2000)) { // Check every 10 seconds
-    lastInternetCheckTime = currentMillis;
+
+  if(currentMillis - lastInternetCheckTime < 2000){
+    return;
+  }
+
+  lastInternetCheckTime = currentMillis;
+  if(WiFi.status() == WL_CONNECTED ) { // Check every 10 seconds
+    
 
     if(!isAuth){
       Serial.println("Not authenticated. Attempting to connect to Firebase...");
@@ -312,6 +318,8 @@ void checkByInternet(){
       if(Firebase.RTDB.getBool(&fbdo , doorPathStatus.c_str(),&doorStatus)){
         if(doorStatus){
           openDoor(); // Open the door
+          Firebase.RTDB.setBool(&fbdo, doorPathStatus.c_str(), false);// Reset the door status after opening
+
         } else {
           Serial.println("Door is CLOSED");
         }
