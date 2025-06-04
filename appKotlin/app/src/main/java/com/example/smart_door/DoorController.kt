@@ -9,17 +9,20 @@ import android.util.Log
 import android.widget.Button
 import android.widget.Switch
 import android.widget.TextView
+import android.widget.TimePicker
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.DatabaseReference
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
+import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.delay
 
 @SuppressLint("UseSwitchCompatOrMaterialCode")
@@ -30,8 +33,15 @@ class DoorController : AppCompatActivity() {
     private lateinit var btnLogout : Button
     private lateinit var txtDoorStatus : TextView
     private lateinit var swtDoor : Switch
+    private lateinit var txtConnectStatus : TextView
     private var currentIdEsp32: String? = null
-    private var doorListener: ValueEventListener? = null
+    private var connectionCheckHandel : Handler? = null
+    private var user : FirebaseUser? = null
+    private var lastTimeEsp32 : Long? = null
+    private var isOnline: Boolean = false
+    private var isOpen: Boolean = false
+    private var isLock : Boolean = false
+    private var countConnect : Int = 1
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -45,159 +55,243 @@ class DoorController : AppCompatActivity() {
         btnLogout = findViewById(R.id.btnLogout)
         txtDoorStatus = findViewById(R.id.txtStatusDoor)
         swtDoor = findViewById(R.id.swtDoor)
+        txtConnectStatus = findViewById(R.id.txtConnectStatus)
 
         // Kiem tra dang nhap
-        val currentUser = auth.currentUser
-        if(currentUser == null){
+        user = auth.currentUser
+        if(user == null){
             Toast.makeText(this@DoorController, "Đăng xuất", Toast.LENGTH_SHORT).show()
             finish()
             return
         }
 
-        // Lay ID ESP32
-        getUserEsp32Id()
+        //Khoi tao 1 handle moi gan cho luong main
+        connectionCheckHandel = Handler(Looper.getMainLooper())
+
+        getIdEsp32();
+
+
+        //gan su kien nghe khi khoa
+        swtDoor.setOnCheckedChangeListener { _, isLock ->
+            //Neu dang dong cua
+            if (!isOpen){
+                updateLockFirebase(isLock)
+            }
+
+            //Neu dang mo cua
+            else{
+                swtDoor.isChecked = false
+                Toast.makeText(this@DoorController, "Cửa đang mở", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        //Gan su kien logout
+        btnLogout.setOnClickListener{
+            auth.signOut()
+            startActivity(Intent(this@DoorController, DangNhap::class.java))
+            finish()
+        }
+
+
     }
 
-    private fun getUserEsp32Id() {
-        val user = auth.currentUser ?: return
+    private fun getIdEsp32() {
+        user?.let {
+            database.child("users").child(it.uid).child("idEsp32").get()
+                .addOnSuccessListener { snapshot ->
+                    currentIdEsp32 = snapshot.getValue(String::class.java)
+                    if(currentIdEsp32 != null){
+                        Toast.makeText(this@DoorController, "Tìm thấy id thiết bị", Toast.LENGTH_SHORT).show()
+                        //Sau khi co thong tin thiet bi
+                        initConnect()
+                        setUpConnection()
+                        setUpDoor()
 
-        database.child("users").child(user.uid).child("idEsp32").get()
-            .addOnSuccessListener { snapshot ->
-                currentIdEsp32 = snapshot.getValue(String::class.java)
-                if (currentIdEsp32 != null) {
-                    // Sau khi co ID, thuc hien cac thao tac khac
-                    readDoorStatus()
-                    setupListener()
-                } else {
-                    Toast.makeText(this@DoorController, "Không tìm thấy ID thiết bị", Toast.LENGTH_SHORT).show()
+                    } else{
+                        Toast.makeText(this@DoorController, "Không tìm thấy ID thiết bị", Toast.LENGTH_SHORT).show()
+                        finish()
+                    }
+                }
+
+                .addOnFailureListener {
+                    Toast.makeText(this@DoorController, "Lỗi lấy ID thiết bị", Toast.LENGTH_SHORT).show()
                     finish()
                 }
-            }
-            .addOnFailureListener { exception ->
-                Toast.makeText(this@DoorController, "Lỗi lấy thông tin thiết bị: ${exception.message}", Toast.LENGTH_SHORT).show()
-                finish()
-            }
+        }
     }
 
-    private fun readDoorStatus() {
-        val idEsp32 = currentIdEsp32 ?: return
-
-        database.child("doors").child(idEsp32).child("status").get()
-            .addOnSuccessListener { snapshot ->
-                val status = snapshot.getValue(Boolean::class.java) ?: false
-                updateUI(status)
-            }
-            .addOnFailureListener { exception ->
-                Toast.makeText(this@DoorController, "Không thể đọc trạng thái cửa: ${exception.message}", Toast.LENGTH_SHORT).show()
-            }
-    }
-
-    private fun updateUI(status: Boolean) {
-        runOnUiThread {
-            swtDoor.setOnCheckedChangeListener(null)
-            swtDoor.isChecked = status
-
-            txtDoorStatus.text = if (status) {
-                "Cửa Đang Mở"
-            } else {
-                "Cửa Đang Đóng"
-            }
-
-            txtDoorStatus.setTextColor(
-                if (status) {
-                    resources.getColor(android.R.color.holo_red_light, null)
-                } else {
-                    resources.getColor(android.R.color.holo_blue_light, null)
+    private fun initConnect() {
+        //Cap nhat lai isOpen
+        currentIdEsp32?.let {
+            database.child("doors").child(it).child("isOpen").get()
+                .addOnSuccessListener { snapshot ->
+                    isOpen = snapshot.getValue(Boolean::class.java) == true
+                    if(isOpen){
+                        txtDoorStatus.text = "Cửa đang mở"
+                    } else{
+                        txtDoorStatus.text = "Cửa đang đóng"
+                    }
                 }
-            )
-
-            // Gan lai listener
-            swtDoor.setOnCheckedChangeListener { _, isChecked ->
-                updateDoorStatus(isChecked)
-            }
-        }
-    }
-
-    private fun setupListener() {
-        val idEsp32 = currentIdEsp32 ?: return
-
-        btnLogout.setOnClickListener{
-            updateDoorStatus(false)
-            logOut()
-        }
-
-        // Realtime listener cho door status
-        doorListener = object : ValueEventListener {
-            override fun onDataChange(snapshot: DataSnapshot) {
-                val status = snapshot.child("status").getValue(Boolean::class.java) ?: false
-                updateUI(status)
-                Log.d("Firebase", "Door status updated via listener: $status")
-            }
-
-            override fun onCancelled(error: DatabaseError) {
-                Log.e("Firebase", "Realtime listener cancelled", error.toException())
-                Toast.makeText(this@DoorController, "Mất kết nối realtime: ${error.message}", Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        database.child("doors").child(idEsp32).addValueEventListener(doorListener!!)
-    }
-
-    private fun updateDoorStatus(isChecked: Boolean) {
-        val user = auth.currentUser
-        val idEsp32 = currentIdEsp32
-
-        if(user == null){
-            Toast.makeText(this@DoorController, "Bạn cần đăng nhập để điều khiển cửa", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        if(idEsp32 == null) {
-            Toast.makeText(this@DoorController, "Không tìm thấy ID thiết bị", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        // Neu mo cua
-        if(isChecked){
-            database.child("doors").child(idEsp32).child("status").setValue(true)
-                .addOnSuccessListener {
-                    Toast.makeText(this@DoorController, "Cửa đã mở", Toast.LENGTH_SHORT).show()
-
-                    // Tu dong dong sau 5 giay
-                    Handler(Looper.getMainLooper()).postDelayed({
-                        database.child("doors").child(idEsp32).child("status").setValue(false)
-                            .addOnSuccessListener {
-                                Log.d("Firebase", "Door auto-closed after 5 seconds")
-                                Toast.makeText(this@DoorController, "Cửa tự động đóng", Toast.LENGTH_SHORT).show()
-                            }
-                            .addOnFailureListener { exception ->
-                                Log.e("Firebase", "Failed to auto-close door", exception)
-                                Toast.makeText(this@DoorController, "Lỗi tự động đóng cửa: ${exception.message}", Toast.LENGTH_SHORT).show()
-                            }
-                    }, 5000)
-
-                }
-                .addOnFailureListener { exception ->
-                    Toast.makeText(this@DoorController, "Lỗi khi mở cửa: ${exception.message}", Toast.LENGTH_SHORT).show()
+                .addOnFailureListener {
                     swtDoor.isChecked = false
                 }
         }
-        // Neu dong cua
-        else{
-            database.child("doors").child(idEsp32).child("status").setValue(false)
-                .addOnSuccessListener {
-                    Toast.makeText(this@DoorController, "Cửa đã đóng", Toast.LENGTH_SHORT).show()
+
+        //Cap nhat isLock
+        currentIdEsp32?.let {
+            database.child("doors").child(it).child("isLock").get()
+                .addOnSuccessListener { snapshot ->
+                    isLock = snapshot.getValue(Boolean::class.java) == true
+                    if(isLock){
+                        swtDoor.isChecked = true
+                    } else{
+                        swtDoor.isChecked = false
+                    }
                 }
-                .addOnFailureListener{ exception ->
-                    Toast.makeText(this@DoorController, "Lỗi khi đóng cửa: ${exception.message}", Toast.LENGTH_SHORT).show()
+                .addOnFailureListener {
+                    txtDoorStatus.text = "Đang tải..."
                 }
         }
     }
 
-    private fun logOut(){
-        auth.signOut()
-        startActivity(Intent(this@DoorController, DangNhap::class.java))
-        finish()
+    private fun updateLockFirebase(isLock: Boolean) {
+        //Neu offline
+        if(txtConnectStatus.text == "Offline"){
+            swtDoor.isChecked = !isLock
+            Toast.makeText(this@DoorController, "Thiết bị đang offline", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        //Neu khoa
+        if(isLock){
+            currentIdEsp32?.let {
+                database.child("doors").child(it).child("isLock").setValue(true)
+                    .addOnSuccessListener {
+                        Toast.makeText(this@DoorController, "Cập nhật trạng thái thành công", Toast.LENGTH_SHORT).show()
+                    }
+
+                    .addOnFailureListener {
+                        swtDoor.isChecked = false
+                        Toast.makeText(this@DoorController, "Lỗi khóa cửa", Toast.LENGTH_SHORT).show()
+                    }
+            }
+        }
+        //Neu mo khoa
+        else{
+            currentIdEsp32?.let {
+                database.child("doors").child(it).child("isLock").setValue(false)
+                    .addOnSuccessListener {
+                        Toast.makeText(this@DoorController, "Cập nhật trạng thái thành công", Toast.LENGTH_SHORT).show()
+                    }
+
+                    .addOnFailureListener {
+                        swtDoor.isChecked = true
+                        Toast.makeText(this@DoorController, "Lỗi mở khóa cửa", Toast.LENGTH_SHORT).show()
+                    }
+            }
+        }
     }
 
+
+
+    private fun setUpDoor() {
+        //Lang nghe o isOpen
+        currentIdEsp32?.let {
+            database.child("doors").child(it).child("isOpen")
+                .addValueEventListener(object : ValueEventListener{
+                    override fun onDataChange(snapshot: DataSnapshot) {
+                        isOpen = snapshot.getValue(Boolean::class.java) ?: false
+                        if(isOpen){
+                            txtDoorStatus.text = "Cửa đang mở"
+                        } else{
+                            txtDoorStatus.text = "Cửa đang đóng"
+                        }
+                    }
+
+                    override fun onCancelled(error: DatabaseError) {
+                        txtDoorStatus.text = "Đang tải..."
+                        Toast.makeText(this@DoorController, "Lỗi lấy thông tin isOpen", Toast.LENGTH_SHORT).show()
+                    }
+
+                })
+        }
+
+        //Lang nghe o isLock
+        currentIdEsp32?.let {
+            database.child("doors").child(it).child("isLock")
+                .addValueEventListener(object : ValueEventListener{
+                    override fun onDataChange(snapshot: DataSnapshot) {
+                        isLock = snapshot.getValue(Boolean::class.java) ?: false
+                        if(isLock){
+                            swtDoor.isChecked = true
+                        } else{
+                            swtDoor.isChecked = false
+                        }
+                    }
+
+                    override fun onCancelled(error: DatabaseError) {
+                        swtDoor.isChecked = false
+                        Toast.makeText(this@DoorController, "Lỗi lấy thông tin isLock", Toast.LENGTH_SHORT).show()
+                    }
+                })
+        }
+    }
+
+    //Khoi tao ket noi
+    private fun setUpConnection() {
+        //Theo doi time
+        currentIdEsp32?.let {
+            database.child("doors").child(it).child("lastTime")
+                .addValueEventListener(object : ValueEventListener{
+                    override fun onDataChange(snapshot: DataSnapshot) {
+                        lastTimeEsp32 = snapshot.getValue(Long::class.java)
+                        isOnline = true
+                        txtConnectStatus.text = "Online"
+
+                        if(countConnect == 1){
+                            countConnect++
+                            isOnline = false
+                            txtConnectStatus.text = "Offline"
+                        }
+
+                    }
+
+                    override fun onCancelled(error: DatabaseError) {
+                        txtConnectStatus.text = "Offline"
+                        Toast.makeText(this@DoorController, "Lỗi thao tác database" , Toast.LENGTH_SHORT).show()
+                    }
+                })
+        }
+
+
+        //Kiem tra dinh ky
+        connectionCheckHandel?.post(object : Runnable{
+            override fun run() {
+                checkTimeConnect()
+                //Gui lai yeu cầu mỗi 3 giay
+                connectionCheckHandel?.postDelayed(this, 3000)
+            }
+        })
+    }
+
+
+
+    private fun checkTimeConnect() {
+        if(lastTimeEsp32 == null){
+            lastTimeEsp32 = 0
+        }
+
+        if(isOnline){
+            //Toast.makeText(this@DoorController, "Online", Toast.LENGTH_SHORT).show()
+            txtConnectStatus.text = "Online"
+        }
+        else{
+            //Toast.makeText(this@DoorController, "Offline", Toast.LENGTH_SHORT).show()
+            swtDoor.isChecked = false
+            txtConnectStatus.text = "Offline"
+        }
+
+        isOnline = false
+
+    }
 }

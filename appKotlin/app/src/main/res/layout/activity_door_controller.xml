@@ -22,6 +22,13 @@
       android:textColor="@android:color/black" />
 
   <TextView
+      android:id="@+id/txtConnectStatus"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:gravity="end"
+      android:text="Đang cập nhật ..." />
+
+  <TextView
       android:id="@+id/txtStatusDoor"
       android:layout_width="wrap_content"
       android:layout_height="wrap_content"
@@ -35,7 +42,7 @@
       android:id="@+id/swtDoor"
       android:layout_width="wrap_content"
       android:layout_height="wrap_content"
-      android:text="Điều khiển cửa"
+      android:text="Khóa cửa"
       android:textSize="16sp"
       android:layout_marginBottom="24dp"
       android:paddingStart="8dp"
