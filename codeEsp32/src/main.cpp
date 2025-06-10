@@ -8,6 +8,10 @@
 #include <Firebase_ESP_Client.h>
 #include <TimeLib.h>
 #include <NTPClient.h>
+#include <vector>
+#include <BLEServer.h>
+#include <BLEDevice.h>
+#include <BLEUtils.h>
 
 //Screen
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
@@ -26,9 +30,8 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 //RFID
 MFRC522 rfid(SS_PIN, RST_PIN);
 
-String passId[10] ={
-  "B1161505" // true password
-};
+std::vector<String> passId = {"B1161505"};
+short maxPassRfid = passId.size();
 
 unsigned long lastRfidCheckTime = 0;
 
@@ -47,9 +50,18 @@ byte pin_rows[ROW_NUM] = { 13, 12, 14, 27 }; // Connect to the row pinouts of th
 byte pin_column[COLUMN_NUM] = { 26, 25, 33 }; // Connect to the column pinouts of the keypad
 Keypad keypad = Keypad(makeKeymap(keys), pin_rows, pin_column, ROW_NUM, COLUMN_NUM);
 
+//For resetWifi
+#define SERVICE_UUID "5ced6bfc-5390-495f-b0f6-8dddc487c58a"
+#define SSID_UUID "cb9d145e-0837-4209-8fd9-d9e5eee0a323"
+#define PASSWORD_UUID "b8c0f1d2-3e4f-5a6b-7c8d-9e0f1a2b3c4d"
+
+String WiFi_SSID ="Bắt Con Sóc";
+String WiFi_PASSWORD ="12121212";
+bool gotSSID = false;
+bool gotPassword = false;
+bool readyToConnect = false;
+
 //For firebase
-#define WiFi_SSID "Bắt Con Sóc"
-#define WiFi_PASSWORD "12121212"
 
 #define API_KEY "AIzaSyA-4jl9_VxBc9COVA0mOVBZV2586ApfobM"
 #define DATABASE_URL "https://smart-door-2-7d605-default-rtdb.asia-southeast1.firebasedatabase.app/"
@@ -90,12 +102,198 @@ unsigned long buttonPressTime = 0;
 //count time
 unsigned long startTime = 0; // will store last time LED was updated
 
+//callback su dung cho character
+class myCallbacks: public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *pCharacteristic) {
+    std::string value = pCharacteristic->getValue();
+    std::string uuid = pCharacteristic->getUUID().toString();
+
+    if (uuid == SSID_UUID) {
+      WiFi_SSID = value.c_str();
+      gotSSID = true;
+      Serial.println("Received SSID: " + WiFi_SSID);
+
+    } else if (uuid == PASSWORD_UUID) {
+      WiFi_PASSWORD = value.c_str();
+      gotPassword = true;
+      Serial.println("Received Password: " + WiFi_PASSWORD);
+    }
+
+    if (gotSSID && gotPassword) {
+      gotSSID = false;
+      gotPassword = false;
+      readyToConnect = true;
+    }
+  }
+};
+
+void initBLE(){
+  BLEDevice::init("MyESP32");
+
+  BLEServer *pServer = BLEDevice::createServer();
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+
+  BLECharacteristic *pSSID = pService->createCharacteristic(
+    SSID_UUID,
+    BLECharacteristic::PROPERTY_WRITE
+  );
+
+  BLECharacteristic *pPass = pService->createCharacteristic(
+    PASSWORD_UUID,
+    BLECharacteristic::PROPERTY_WRITE
+  );
+
+  pSSID->setCallbacks(new myCallbacks());
+  pPass->setCallbacks(new myCallbacks());
+
+  pService->start();
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  BLEDevice::startAdvertising();
+
+  Serial.println("Doi ket noi ble");
+}
 
 void enterPassword(){
   display.clearDisplay();
   display.setCursor(0,0);
   display.println("Enter password:");
   display.display();
+}
+
+void changeLock(){
+  display.clearDisplay();
+  display.setCursor(0,0);
+  display.println("Thay doi khoa");
+  display.println("1. Xoa toan bo khoa");
+  display.println("2. Them khoa");
+  display.println("An * de thoat");
+  display.display();
+
+  while(1){
+    char key4 = keypad.getKey();
+    if(key4 == '1'){
+      //Xoa toan bo
+      passId.clear();
+      maxPassRfid = passId.size();
+
+      display.clearDisplay();
+      display.setCursor(0,0);
+      display.println("Da xoa thanh cong");
+      display.display();
+      delay(200);
+      return;
+    }
+    else if(key4 ==  '2'){
+      display.clearDisplay();
+      display.setCursor(0,0);
+      display.println("Vui long them khoa");
+      display.display();
+      String midId = "";
+
+      while(1){
+        if(rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()){
+          Serial.print("Card UID: ");
+
+          for(byte i = 0; i < rfid.uid.size ; i++){
+            if(rfid.uid.uidByte[i] < 0x10){
+              midId += "0";
+            }
+            midId += String(rfid.uid.uidByte[i], HEX);
+          }
+
+          midId.toUpperCase();
+
+          for(short i = 0; i< maxPassRfid ;  i++){
+            if(midId == passId[i]){
+              display.clearDisplay();
+              display.setCursor(0,0);
+              display.println("Khoa da ton tai");
+              display.display();
+              delay(200);
+              return;
+            }
+          }
+
+          passId.push_back(midId);
+          maxPassRfid++;
+          display.clearDisplay();
+          display.setCursor(0,0);
+          display.println("Da them the thanh cong");
+          display.display();
+          delay(200);          
+          return;
+        }
+      }
+
+    }
+    else if(key4 == '*'){
+      return;
+    }
+  }
+}
+
+void changeWifi(){
+  display.clearDisplay();
+  display.setCursor(0,0);
+  display.println("Su dung app de cau hinh");
+  display.display();
+
+  WiFi.disconnect();
+  initBLE();
+
+  while(1){
+    // Serial.println("test ble");
+    if(readyToConnect){
+      gotSSID = false;
+      gotPassword = false;
+      readyToConnect = false;
+
+      unsigned long startTime = millis();
+
+      display.clearDisplay();
+      display.setCursor(0,0);
+      display.println("Ket noi wifi...");
+      display.display();
+
+      WiFi.begin(WiFi_SSID.c_str(), WiFi_PASSWORD.c_str());
+
+      while (WiFi.status() != WL_CONNECTED && (millis() - startTime < 5000)) {
+        delay(1000);
+        Serial.println(".");
+      }
+
+      if(WiFi.status() == WL_CONNECTED){
+        
+        display.clearDisplay();
+        display.setCursor(0,0);
+        display.println("Ket noi thanh cong");
+        display.println(WiFi_SSID);
+        display.display();
+
+        Serial.println("Connected to WiFi!");
+        Serial.print("IP Address: ");
+        Serial.println(WiFi.localIP());
+        delay(100);
+      
+        BLEDevice::deinit(true);
+        return;
+
+      } else{
+        Serial.println("Failed to connect to WiFi.");
+        
+        display.clearDisplay();
+        display.setCursor(0,0);
+        display.println("Ket noi that bai");
+        display.display();
+        delay(100);
+
+        BLEDevice::deinit(true);
+        return;
+      }
+    }
+    delay(100);
+  }
 }
 
 void createNewPassword(){
@@ -106,12 +304,12 @@ void createNewPassword(){
 
   String newPassword = "";
   while(newPassword.length() < lengthpassword){
-    char key = keypad.getKey();
+    char key3 = keypad.getKey();
     
-    if(key){
-      Serial.print("Key pressed: " + String(key));
+    if(key3){
+      Serial.print("Key pressed: " + String(key3));
       
-      if(key == '*'){
+      if(key3 == '*'){
         newPassword = ""; // Clear the input
         Serial.println("Clearing password input.");
         display.clearDisplay();
@@ -121,11 +319,11 @@ void createNewPassword(){
         continue;
       }
       
-      if(key == '#'){
+      if(key3 == '#'){
         return;
       }
 
-      newPassword += key;
+      newPassword += key3;
       if(newPassword.length() == lengthpassword){
         newPassword.toUpperCase();
         truePassword = newPassword; // Update the true password
@@ -139,13 +337,47 @@ void createNewPassword(){
         delay(1000); // Show the message for 2 seconds
         midPassword = ""; // Reset the midPassword
         enterPassword();
-        break;
+        return;
       }
       else{
         display.print("*");
         display.display();
       }
+    }
+  }
+}
+
+void selectMode(){
+  display.clearDisplay();
+  display.setCursor(0,0);
+  display.println("Chon che do");
+  display.println("1. Thay doi mat khau");
+  display.println("2. Thay doi khoa tu");
+  display.println("3. Thay doi wifi");
+  display.println("An # de thoat");
+  display.display();
+  delay(100);
+
+  while(1){
+    char key1 = keypad.getKey();
+    if(key1){
+      Serial.print("Key pressed: " + String(key1));
       
+      if(key1 == '1'){
+        createNewPassword();
+        return;
+      }
+      else if(key1 == '2'){
+        changeLock();
+        return;
+      }
+      else if(key1 == '3'){
+        changeWifi();
+        return;
+      }
+      else if(key1 == '#'){
+        return;
+      }
     }
   }
 }
@@ -158,24 +390,24 @@ void resetPassword(){
   display.display();  
 
   while(1){
-    char key = keypad.getKey();
-    if(key){
-      Serial.print("Key pressed: " + String(key));
+    char key2 = keypad.getKey();
+    if(key2){
+      Serial.print("Key pressed: " + String(key2));
       
-      if(key == '*'){
-        break;
+      if(key2 == '*'){
+        return;
       }
       
-      if(key == '#'){
+      if(key2 == '#'){
         continue;
       }
 
-      newPassword += key;
+      newPassword += key2;
       if(newPassword.length() == lengthpassword){
         newPassword.toUpperCase();
         if(newPassword == truePassword){
-          createNewPassword();
-          break;
+          selectMode();
+          return;
         }
         else {
           Serial.println("Mat khau hien tai khong dung!");
@@ -343,7 +575,7 @@ void setup() {
   rfid.PCD_Init(); 
   
   //For firebase
-  WiFi.begin(WiFi_SSID, WiFi_PASSWORD);
+  WiFi.begin(WiFi_SSID.c_str(), WiFi_PASSWORD.c_str());
 
   Firebase.begin(&config, &auth);
   Firebase.reconnectWiFi(true);
@@ -391,6 +623,7 @@ void checkByKeypad(){
       if(countReset >= 3){
         resetPassword();
         countReset = 0; // Reset the count after successful reset
+        enterPassword();
         return;
       }
       return;
@@ -406,6 +639,8 @@ void checkByKeypad(){
       Serial.println("Checking password: " + midPassword);
       handlePassword();
       midPassword = "";
+      enterPassword();
+      return;
     } 
     else{
       display.print("*");
@@ -438,7 +673,7 @@ void checkByRFID(){
 
     midId.toUpperCase(); // Convert to uppercase for consistency
 
-    for(byte i = 0 ; i < 10 ;i++){
+    for(byte i = 0 ; i < maxPassRfid ;i++){
       if(midId == passId[i]){
         Serial.println("Success with RFID: " + midId);
         display.clearDisplay();
@@ -470,7 +705,6 @@ void checkByRFID(){
 }
 
 void checkByInternet(){
-
   unsigned long currentMillis = millis();
   if(currentMillis - lastInternetCheckTime < 2000){
     return;
@@ -517,9 +751,10 @@ void checkByInternet(){
     }
   }
   else{
-    WiFi.begin(WiFi_SSID, WiFi_PASSWORD);
+    WiFi.begin(WiFi_SSID.c_str(), WiFi_PASSWORD.c_str());
     ntpInitialized = false;
     isUpdate = false;
+    isAuth = false;
   }
 }
 
