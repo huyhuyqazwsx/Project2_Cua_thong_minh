@@ -5,16 +5,12 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
 import android.widget.Button
 import android.widget.Switch
 import android.widget.TextView
-import android.widget.TimePicker
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.database.DataSnapshot
@@ -23,7 +19,7 @@ import com.google.firebase.database.DatabaseReference
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
 import kotlinx.coroutines.Runnable
-import kotlinx.coroutines.delay
+import java.io.Serializable
 
 @SuppressLint("UseSwitchCompatOrMaterialCode")
 class DoorController : AppCompatActivity() {
@@ -31,6 +27,7 @@ class DoorController : AppCompatActivity() {
     private lateinit var database : DatabaseReference
     private lateinit var auth : FirebaseAuth
     private lateinit var btnLogout : Button
+    private lateinit var btnDoiWifi : Button
     private lateinit var txtDoorStatus : TextView
     private lateinit var swtDoor : Switch
     private lateinit var txtConnectStatus : TextView
@@ -43,6 +40,15 @@ class DoorController : AppCompatActivity() {
     private var isLock : Boolean = false
     private var countConnect : Int = 1
 
+    data class InfoUUID(
+        val MAC: String = "",
+        val PASSWORD_UUID: String = "",
+        val SERVICE_UUID: String = "",
+        val SSID_UUID: String = ""
+    ): Serializable
+
+    private var infoUUID : InfoUUID? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -53,6 +59,7 @@ class DoorController : AppCompatActivity() {
         database = FirebaseDatabase.getInstance().reference
 
         btnLogout = findViewById(R.id.btnLogout)
+        btnDoiWifi = findViewById(R.id.btnDoiWifi)
         txtDoorStatus = findViewById(R.id.txtStatusDoor)
         swtDoor = findViewById(R.id.swtDoor)
         txtConnectStatus = findViewById(R.id.txtConnectStatus)
@@ -70,7 +77,11 @@ class DoorController : AppCompatActivity() {
 
         getIdEsp32();
 
+        addListenerForButton()
 
+    }
+
+    private fun addListenerForButton(){
         //gan su kien nghe khi khoa
         swtDoor.setOnCheckedChangeListener { _, isLock ->
             //Neu dang dong cua
@@ -92,6 +103,12 @@ class DoorController : AppCompatActivity() {
             finish()
         }
 
+        //Gan su kien doi mat khau wifi
+        btnDoiWifi.setOnClickListener{
+            val intent = Intent(this@DoorController, DoiMatKhauWifi::class.java)
+            intent.putExtra("infoUUID", infoUUID)  // truyền object
+            startActivity(intent)
+        }
 
     }
 
@@ -102,11 +119,7 @@ class DoorController : AppCompatActivity() {
                     currentIdEsp32 = snapshot.getValue(String::class.java)
                     if(currentIdEsp32 != null){
                         Toast.makeText(this@DoorController, "Tìm thấy id thiết bị", Toast.LENGTH_SHORT).show()
-                        //Sau khi co thong tin thiet bi
-                        initConnect()
-                        setUpConnection()
-                        setUpDoor()
-
+                        getInfoUUID()
                     } else{
                         Toast.makeText(this@DoorController, "Không tìm thấy ID thiết bị", Toast.LENGTH_SHORT).show()
                         finish()
@@ -119,6 +132,34 @@ class DoorController : AppCompatActivity() {
                 }
         }
     }
+
+    private fun getInfoUUID(){
+
+        currentIdEsp32?.let {
+            database.child("doors").child(it).child("infoUUID").get()
+                .addOnSuccessListener { snapshot ->
+                    infoUUID = snapshot.getValue(InfoUUID::class.java)
+                    if(infoUUID != null){
+                        Toast.makeText(this@DoorController, "Lấy thông tin BLE thành công", Toast.LENGTH_SHORT).show()
+                        //Sau khi co day du thong tin
+                        initConnect()
+                        monitorConnect()
+                        startConnectionCheck()
+                        monitorDoor()
+                    }
+                    else{
+                        Toast.makeText(this@DoorController, "Không tìm thấy thong tin BLE", Toast.LENGTH_SHORT).show()
+                        finish()
+                    }
+                }
+
+                .addOnFailureListener {
+                    Toast.makeText(this@DoorController, "Lỗi khi lấy thông tin BLE", Toast.LENGTH_SHORT).show()
+                }
+
+        }
+    }
+
 
     private fun initConnect() {
         //Cap nhat lai isOpen
@@ -192,9 +233,7 @@ class DoorController : AppCompatActivity() {
         }
     }
 
-
-
-    private fun setUpDoor() {
+    private fun monitorDoor() {
         //Lang nghe o isOpen
         currentIdEsp32?.let {
             database.child("doors").child(it).child("isOpen")
@@ -237,8 +276,7 @@ class DoorController : AppCompatActivity() {
         }
     }
 
-    //Khoi tao ket noi
-    private fun setUpConnection() {
+    private fun monitorConnect(){
         //Theo doi time
         currentIdEsp32?.let {
             database.child("doors").child(it).child("lastTime")
@@ -262,12 +300,14 @@ class DoorController : AppCompatActivity() {
                     }
                 })
         }
+    }
 
-
+    //Khoi tao ket noi
+    private fun startConnectionCheck() {
         //Kiem tra dinh ky
         connectionCheckHandel?.post(object : Runnable{
             override fun run() {
-                checkTimeConnect()
+                checkOnline()
                 //Gui lai yeu cầu mỗi 3 giay
                 connectionCheckHandel?.postDelayed(this, 3000)
             }
@@ -276,7 +316,7 @@ class DoorController : AppCompatActivity() {
 
 
 
-    private fun checkTimeConnect() {
+    private fun checkOnline() {
         if(lastTimeEsp32 == null){
             lastTimeEsp32 = 0
         }

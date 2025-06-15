@@ -61,6 +61,13 @@ bool gotSSID = false;
 bool gotPassword = false;
 bool readyToConnect = false;
 
+BLEServer *pServer;
+BLEService *pService;
+BLECharacteristic *pSSID;
+
+BLECharacteristic *pPass;
+BLEAdvertising *pAdvertising;
+
 //For firebase
 
 #define API_KEY "AIzaSyA-4jl9_VxBc9COVA0mOVBZV2586ApfobM"
@@ -94,7 +101,7 @@ unsigned long lastResetTime = 0;
 #define BUTTON_LOCK 19
 
 bool isOpen = false;
-bool isLock = false;
+bool isLock = true;
 bool isUpdate = false;
 volatile bool buttonPressed = false;
 unsigned long buttonPressTime = 0;
@@ -130,15 +137,15 @@ class myCallbacks: public BLECharacteristicCallbacks {
 void initBLE(){
   BLEDevice::init("MyESP32");
 
-  BLEServer *pServer = BLEDevice::createServer();
-  BLEService *pService = pServer->createService(SERVICE_UUID);
+  pServer = BLEDevice::createServer();
+  pService = pServer->createService(SERVICE_UUID);
 
-  BLECharacteristic *pSSID = pService->createCharacteristic(
+  pSSID = pService->createCharacteristic(
     SSID_UUID,
     BLECharacteristic::PROPERTY_WRITE
   );
 
-  BLECharacteristic *pPass = pService->createCharacteristic(
+  pPass = pService->createCharacteristic(
     PASSWORD_UUID,
     BLECharacteristic::PROPERTY_WRITE
   );
@@ -147,11 +154,11 @@ void initBLE(){
   pPass->setCallbacks(new myCallbacks());
 
   pService->start();
-  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
-  pAdvertising->addServiceUUID(SERVICE_UUID);
-  BLEDevice::startAdvertising();
 
-  Serial.println("Doi ket noi ble");
+  pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+
+  // Serial.println("Doi ket noi ble");
 }
 
 void enterPassword(){
@@ -210,7 +217,9 @@ void changeLock(){
               display.setCursor(0,0);
               display.println("Khoa da ton tai");
               display.display();
-              delay(200);
+
+              Serial.println("Khoa da ton tai");
+              delay(500);
               return;
             }
           }
@@ -221,7 +230,9 @@ void changeLock(){
           display.setCursor(0,0);
           display.println("Da them the thanh cong");
           display.display();
-          delay(200);          
+
+          Serial.println("Da them the thanh cong");
+          delay(500);          
           return;
         }
       }
@@ -237,12 +248,28 @@ void changeWifi(){
   display.clearDisplay();
   display.setCursor(0,0);
   display.println("Su dung app de cau hinh");
+  display.println("An * de thoat");
   display.display();
 
   WiFi.disconnect();
-  initBLE();
+
+  //Quang ba
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  BLEDevice::startAdvertising();
 
   while(1){
+    char key = keypad.getKey();
+    if(key == '*'){
+
+      if (pServer->getConnectedCount() > 0) {
+        pServer->disconnect(0);
+      }
+
+      BLEDevice::getAdvertising()->stop();
+      delay(300);
+      return;
+    }
+
     // Serial.println("test ble");
     if(readyToConnect){
       gotSSID = false;
@@ -274,9 +301,15 @@ void changeWifi(){
         Serial.println("Connected to WiFi!");
         Serial.print("IP Address: ");
         Serial.println(WiFi.localIP());
-        delay(100);
-      
-        BLEDevice::deinit(true);
+        
+        delay(300);
+        //Ngat ket noi voi client
+        if (pServer->getConnectedCount() > 0) {
+          pServer->disconnect(0);
+        }
+
+        BLEDevice::getAdvertising()->stop();
+        delay(700);
         return;
 
       } else{
@@ -288,8 +321,13 @@ void changeWifi(){
         display.display();
         delay(100);
 
-        BLEDevice::deinit(true);
-        return;
+        display.clearDisplay();
+        display.setCursor(0,0);
+        display.println("Su dung app de cau hinh");
+        display.println("An * de thoat");
+        display.display();
+
+        WiFi.disconnect();
       }
     }
     delay(100);
@@ -434,9 +472,14 @@ void resetPassword(){
 
 void updateTimeFirebase(){
   unsigned long now = timeClient.getEpochTime();
-  Firebase.RTDB.setInt(&fbdo, doorPath + "/lastTime" , now);
-  Serial.println("Firebase connected and time updated.");
-  Serial.println("Current time: " + timeClient.getFormattedTime());
+  if(Firebase.RTDB.setInt(&fbdo, doorPath + "/lastTime" , now)){
+    Serial.println("Cap nhat lastTime thanh cong");
+    Serial.println("Thoi gian: " + timeClient.getFormattedTime());
+  }
+  else{
+    Serial.println("Cap nhat lastTime that bai");
+  }
+  
 }
 
 void updateDoorFirebase(){
@@ -448,21 +491,29 @@ void updateDoorFirebase(){
 void getDoorFirebase(){
   if (Firebase.RTDB.getBool(&fbdo, doorPath + "/isOpen")) {
     isOpen = fbdo.boolData();
-  }
-  
-  if (Firebase.RTDB.getBool(&fbdo, doorPath + "/isLock")) {
-    isLock = fbdo.boolData(); 
-  } 
 
-  if(isLock){
-    digitalWrite(LED_PIN, HIGH); 
-  } else {
-    digitalWrite(LED_PIN, LOW);
-  }
+    //Kiem tra isLock
+    if(Firebase.RTDB.getBool(&fbdo, doorPath + "/isLock")){
+      isLock = fbdo.boolData();
 
-  Serial.println("Door status retrieved from Firebase.");
-  Serial.println("isOpen: " + String(isOpen));
-  Serial.println("isLock: " + String(isLock));
+      if(isLock){
+        digitalWrite(LED_PIN, HIGH); 
+      } else {
+        digitalWrite(LED_PIN, LOW);
+      }
+
+      Serial.println("Thong tin tu firebase");
+      Serial.println("isOpen: " + String(isOpen));
+      Serial.println("isLock: " + String(isLock));
+    }
+    else{
+      Serial.println("Loi lay thong tin isLock");
+    }
+    
+  }
+  else{
+    Serial.println("Loi lay thong tin isOpen");
+  }
 }
 
 void openDoor(){
@@ -534,15 +585,20 @@ void checkFireBaseConnect(){
 
     Firebase.begin(&config, &auth);
     Firebase.reconnectWiFi(true);
+    fbdo.setBSSLBufferSize(1024, 1024);
+    fbdo.setResponseSize(1024);
+    Firebase.setDoubleDigits(5);
+    config.timeout.serverResponse = 10000;
 
 
     if (Firebase.ready()){
-    Serial.println("Firebase authentication successful");
-    if(auth.token.uid.length() > 0) {
-      Serial.print("User UID: ");
-      Serial.println(auth.token.uid.c_str());
-    }
-    isAuth = true;
+      Serial.println("Firebase authentication successful");
+      if(auth.token.uid.length() > 0) {
+        Serial.print("User UID: ");
+        Serial.println(auth.token.uid.c_str());
+      }
+      
+      isAuth = true;
 
     }
     else{
@@ -588,6 +644,9 @@ void setup() {
   // NTP Client
   timeClient.begin();
 
+  //ble
+  initBLE();
+
   // Man hinh chinh
   enterPassword();
 
@@ -610,7 +669,7 @@ void checkByKeypad(){
 
     // Change password
     if(key == '#'){
-      Serial.println("Changing password...");
+      Serial.println("Chuc nang");
       if(millis() - lastResetTime < 3000){
         countReset++;
       }
@@ -622,7 +681,7 @@ void checkByKeypad(){
       
       if(countReset >= 3){
         resetPassword();
-        countReset = 0; // Reset the count after successful reset
+        countReset = 0; 
         enterPassword();
         return;
       }
@@ -752,9 +811,9 @@ void checkByInternet(){
   }
   else{
     WiFi.begin(WiFi_SSID.c_str(), WiFi_PASSWORD.c_str());
-    ntpInitialized = false;
-    isUpdate = false;
-    isAuth = false;
+    // ntpInitialized = false;
+    // isUpdate = false;
+    // isAuth = false;
   }
 }
 
@@ -778,5 +837,4 @@ void loop() {
   checkByKeypad();
   checkByRFID();
   checkByInternet();
-  delay(100);
 }
